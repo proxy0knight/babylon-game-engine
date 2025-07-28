@@ -123,19 +123,5 @@
       "path": "./node_modules/cz-conventional-changelog"
     }
   }
-}": "^5.0.0",
-    "@types/node": "^20.0.0"
-  },
-  "keywords": [
-    "babylon.js",
-    "webgpu",
-    "3d",
-    "game",
-    "engine",
-    "typescript",
-    "vite"
-  ],
-  "author": "Babylon Game Engine",
-  "license": "MIT"
 }
 

@@ -13,6 +13,7 @@ export class AdminDashboard {
     private canvas: HTMLCanvasElement | null = null;
     private editor: any;
     private apiClient: ApiClient;
+    private isWebGPUEnabled: boolean = false;
 
     constructor(container: HTMLElement, router: Router) {
         this.container = container;
@@ -33,8 +34,8 @@ export class AdminDashboard {
         if (this.editor && !this.editor.getValue().trim()) {
             this.editor.setValue(this.getDefaultCode());
         }
-
-        // تشغيل الكود الموجود في المحرر تلقائيًا عند التحميل الأولي
+        
+        // تشغيل الكود الموجود في المحرر تلقائيًا عند التحميل الأولي إذا كان يحتوي على كود
         if (this.editor && this.editor.getValue().trim()) {
             await this.runCode();
         }
@@ -78,6 +79,10 @@ export class AdminDashboard {
                     </div>
                     
                     <div class="header-right">
+                        <select id="engine-selector" class="engine-selector">
+                            <option value="webgl2">WebGL2</option>
+                            <option value="webgpu">WebGPU</option>
+                        </select>
                         <button class="control-btn" id="layout-btn">⚏</button>
                         <button class="control-btn" id="settings-btn">⚙️</button>
                     </div>
@@ -125,7 +130,7 @@ export class AdminDashboard {
                         <span id="status-text">جاهز</span>
                         <div class="status-right">
                             <span id="cursor-position">السطر 1، العمود 1</span>
-                            <span id="engine-info">WebGL</span>
+                            <span id="engine-info">WebGL2</span>
                         </div>
                     </div>
                 </div>
@@ -209,7 +214,7 @@ export class AdminDashboard {
                     margin: 0 0.5rem;
                 }
                 
-                .asset-selector, .language-selector {
+                .asset-selector, .language-selector, .engine-selector {
                     padding: 0.5rem;
                     background: #3c3c3c;
                     border: 1px solid #3e3e42;
@@ -218,8 +223,13 @@ export class AdminDashboard {
                     cursor: pointer;
                 }
                 
+                .engine-selector {
+                    margin-right: 0.5rem;
+                }
+                
                 .header-right {
                     display: flex;
+                    align-items: center;
                     gap: 0.5rem;
                 }
                 
@@ -422,6 +432,7 @@ export class AdminDashboard {
         const saveBtn = document.getElementById('save-btn');
         const loadBtn = document.getElementById('load-btn');
         const runBtn = document.getElementById('run-btn');
+        const engineSelector = document.getElementById('engine-selector') as HTMLSelectElement;
 
         backBtn?.addEventListener('click', () => {
             this.cleanup();
@@ -432,6 +443,8 @@ export class AdminDashboard {
         saveBtn?.addEventListener('click', () => this.saveProject());
         loadBtn?.addEventListener('click', () => this.loadProject());
         runBtn?.addEventListener('click', () => this.runCode());
+        
+        engineSelector?.addEventListener('change', () => this.switchEngine());
     }
 
     /**
@@ -479,10 +492,12 @@ export class AdminDashboard {
             // استيراد Babylon.js بشكل مودولي
             const [
                 { Engine },
+                { WebGPUEngine },
                 { Scene },
                 { Color3 }
             ] = await Promise.all([
                 import('@babylonjs/core/Engines/engine'),
+                import('@babylonjs/core/Engines/webgpuEngine'),
                 import('@babylonjs/core/scene'),
                 import('@babylonjs/core/Maths/math.color')
             ]);
@@ -490,12 +505,28 @@ export class AdminDashboard {
             this.canvas = document.getElementById('babylon-canvas') as HTMLCanvasElement;
             if (!this.canvas) return;
 
-            // إنشاء محرك Babylon.js
-            this.engine = new Engine(this.canvas, true, {
-                preserveDrawingBuffer: true,
-                stencil: true,
-                antialias: true
-            });
+            // تحديد نوع المحرك بناءً على الاختيار
+            const engineSelector = document.getElementById('engine-selector') as HTMLSelectElement;
+            const selectedEngine = engineSelector?.value || 'webgl2';
+
+            if (selectedEngine === 'webgpu' && await WebGPUEngine.IsSupportedAsync) {
+                // إنشاء محرك WebGPU
+                this.engine = new WebGPUEngine(this.canvas, {
+                    antialias: true,
+                    stencil: true,
+                    preserveDrawingBuffer: true
+                });
+                await this.engine.initAsync();
+                this.isWebGPUEnabled = true;
+            } else {
+                // إنشاء محرك WebGL2
+                this.engine = new Engine(this.canvas, true, {
+                    preserveDrawingBuffer: true,
+                    stencil: true,
+                    antialias: true
+                });
+                this.isWebGPUEnabled = false;
+            }
 
             // إنشاء مشهد فارغ
             this.scene = new Scene(this.engine);
@@ -520,13 +551,59 @@ export class AdminDashboard {
             }
 
             // تحديث معلومات المحرك
-            const engineInfo = document.getElementById('engine-info');
-            if (engineInfo) {
-                engineInfo.textContent = this.engine.webGLVersion > 1 ? 'WebGL2' : 'WebGL';
-            }
+            this.updateEngineInfo();
 
         } catch (error) {
             console.error('Failed to initialize Babylon.js:', error);
+        }
+    }
+
+    /**
+     * تحديث معلومات المحرك
+     */
+    private updateEngineInfo(): void {
+        const engineInfo = document.getElementById('engine-info');
+        if (engineInfo) {
+            if (this.isWebGPUEnabled) {
+                engineInfo.textContent = 'WebGPU';
+            } else {
+                engineInfo.textContent = this.engine?.webGLVersion > 1 ? 'WebGL2' : 'WebGL';
+            }
+        }
+    }
+
+    /**
+     * تبديل محرك العرض
+     */
+    private async switchEngine(): Promise<void> {
+        const engineSelector = document.getElementById('engine-selector') as HTMLSelectElement;
+        const selectedEngine = engineSelector?.value || 'webgl2';
+        
+        try {
+            // تنظيف المحرك الحالي
+            if (this.engine) {
+                this.engine.dispose();
+            }
+
+            // إعادة تهيئة المحرك الجديد
+            await this.initializeBabylon();
+            
+            // إعادة تشغيل الكود الحالي إذا كان موجودًا
+            if (this.editor && this.editor.getValue().trim()) {
+                await this.runCode();
+            }
+
+            const statusText = document.getElementById('status-text');
+            if (statusText) {
+                statusText.textContent = `تم التبديل إلى ${selectedEngine === 'webgpu' ? 'WebGPU' : 'WebGL2'}`;
+            }
+
+        } catch (error) {
+            console.error('Error switching engine:', error);
+            const statusText = document.getElementById('status-text');
+            if (statusText) {
+                statusText.textContent = `خطأ في تبديل المحرك: ${error.message}`;
+            }
         }
     }
 
